@@ -11,6 +11,7 @@ CLEAN_DIR = Path("data_clean")
 IMG_DIR = Path("images")
 SQL_FILE = Path("sql/queries.sql")
 OUT_DIR = Path("output")
+DB_FILE = Path("soccer.db")
 
 for folder in (CLEAN_DIR, IMG_DIR, OUT_DIR):
     folder.mkdir(parents=True, exist_ok=True)
@@ -54,3 +55,12 @@ def load_and_clean() -> pd.DataFrame:
     (CLEAN_DIR / "matches_clean.csv").parent.mkdir(parents=True, exist_ok=True)
     matches.to_csv(CLEAN_DIR / "matches_clean.csv", index=False)
     return matches
+
+
+def load_to_sqlite(df: pd.DataFrame, db_path: Path = DB_FILE, table: str = "matches")->None:
+    if db_path.exists():
+        db_path.unlink()
+    with sqlite3.connect(db_path) as conn:
+        df.to_sql(table, conn, if_exists="replace", index = False)
+    print(f"[OK] SQLite -> {db_path} (table: {table})")
+
