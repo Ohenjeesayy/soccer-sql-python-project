@@ -17,8 +17,16 @@ for folder in (CLEAN_DIR, IMG_DIR, OUT_DIR):
     folder.mkdir(parents=True, exist_ok=True)
 
 def season_from_name(path: Path) -> str:
-    m = re.search(r"(\d{4})[_-]\d{4}", path.stem)
-    return f"{m.group(1)} ={m.group(2)}" if m else "unknown"
+    # filename without extension, e.g. "2022-2023" or "E0_2022_2023"
+    stem = path.stem.strip()
+    # normalize any funky dashes to a hyphen
+    stem = stem.replace("–", "-").replace("—", "-")
+    # grab ALL 4-digit numbers in the name
+    years = re.findall(r"\d{4}", stem)
+    # if we found at least two, use the first two
+    if len(years) >= 2:
+        return f"{years[0]}-{years[1]}"
+    return "unknown"
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -48,6 +56,7 @@ def load_and_clean() -> pd.DataFrame:
 
         df['total_goals'] = df["ftag"] + df["fthg"]
         df["is_draw"] = (df["ftr"].str.upper() == "D").astype(int) #this will return 1 if the result is draw, else 0
+        print("[Debug] parsing season from:", f, "stem:", f.stem)
         df["season"] = season_from_name(f)
 
         frames.append(df)
@@ -64,3 +73,54 @@ def load_to_sqlite(df: pd.DataFrame, db_path: Path = DB_FILE, table: str = "matc
         df.to_sql(table, conn, if_exists="replace", index = False)
     print(f"[OK] SQLite -> {db_path} (table: {table})")
 
+
+def run_queries(sql_path: Path = SQL_FILE, db_path: Path = DB_FILE) -> None:
+    """Execute semicolon-separated queries in sql/queries.sql, save outputs/q*.csv."""
+    if not sql_path.exists():
+        print("[WARNING] sql/queries.sql not found; skipping SQL.")
+        return
+    text = sql_path.read_text(encoding="utf-8")
+    stmts = [s.strip() for s in text.split(";") if s.strip()]
+    with sqlite3.connect(db_path) as conn:
+        for i, stmt in enumerate(stmts, 1):
+            try:
+                df = pd.read_sql(stmt, conn)
+                out = OUT_DIR / f"q{i}.csv"
+                df.to_csv(out, index=False)
+                print(f"[OK] Query {i} -> {out}")
+            except Exception as e:
+                print(f"[WARN] Query {i} failed: {e}")
+
+def make_charts(df: pd.DataFrame) -> None:
+    """Produce two charts and save to images/."""
+    # Avg goals by month (line)
+    temp = df.copy()
+    temp["month"] = temp["date"].dt.to_period("M").dt.to_timestamp()
+    by_month = temp.groupby("month")["total_goals"].mean().reset_index()
+    plt.figure()
+    plt.plot(by_month["month"], by_month["total_goals"])
+    plt.title("Average Goals per Match by Month")
+    plt.xlabel("Month"); plt.ylabel("Avg Goals"); plt.tight_layout()
+    plt.savefig(IMG_DIR / "avg_goals_by_month.png", dpi=200)
+
+    # Top-10 teams by aggregate goals (bar)
+    tg = (df.groupby("home_team")["fthg"].sum().rename("gf_home").to_frame()
+            .join(df.groupby("away_team")["ftag"].sum().rename("gf_away"), how="outer").fillna(0))
+    tg["total"] = tg["gf_home"] + tg["gf_away"]
+    top10 = tg.sort_values("total", ascending=False).head(10)
+    plt.figure()
+    top10["total"].plot(kind="bar")
+    plt.title("Top 10 Teams by Goals")
+    plt.ylabel("Goals"); plt.tight_layout()
+    plt.savefig(IMG_DIR / "top_teams_goals.png", dpi=200)
+    print(f"[OK] Charts -> {IMG_DIR/'avg_goals_by_month.png'}, {IMG_DIR/'top_teams_goals.png'}")
+
+def main() -> None:
+    df = load_and_clean()
+    load_to_sqlite(df)
+    run_queries()
+    make_charts(df)
+    print("[DONE]")
+
+if __name__ == "__main__":
+    main()
