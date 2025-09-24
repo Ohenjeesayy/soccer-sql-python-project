@@ -56,7 +56,6 @@ def load_and_clean() -> pd.DataFrame:
 
         df['total_goals'] = df["ftag"] + df["fthg"]
         df["is_draw"] = (df["ftr"].str.upper() == "D").astype(int) #this will return 1 if the result is draw, else 0
-        print("[Debug] parsing season from:", f, "stem:", f.stem)
         df["season"] = season_from_name(f)
 
         frames.append(df)
